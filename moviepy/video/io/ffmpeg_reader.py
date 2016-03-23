@@ -25,8 +25,8 @@ except ImportError:
 
 class FFMPEG_VideoReader:
 
-    def __init__(self, filename, print_infos=False, bufsize = None,
-                 pix_fmt="rgb24", check_duration=True):
+    def __init__(self, filename, print_infos=False, bufsize=None,
+                 pix_fmt="rgb24", check_duration=True, starttime=0, duration=None):
 
         self.filename = filename
         infos = ffmpeg_parse_infos(filename, print_infos, check_duration)
@@ -35,6 +35,9 @@ class FFMPEG_VideoReader:
         self.duration = infos['video_duration']
         self.ffmpeg_duration = infos['duration']
         self.nframes = infos['video_nframes']
+
+        self.ss_flag = starttime
+        self.t_flag = duration
 
         self.infos = infos
 
@@ -48,26 +51,31 @@ class FFMPEG_VideoReader:
             w, h = self.size
             bufsize = self.depth * w * h + 100
 
-        self.bufsize= bufsize
-        self.initialize()
+        self.bufsize = bufsize
+        self.initialize(starttime=starttime, duration=duration)
 
 
-        self.pos = 1
-        self.lastread = self.read_frame()
+        self.pos = 0
+        #self.lastread = self.read_frame()
 
 
-    def initialize(self, starttime=0):
+    def initialize(self, starttime=0, duration=None):
         """Opens the file, creates the pipe. """
 
         self.close() # if any
 
-        if starttime != 0 :
-            offset = min(1, starttime)
-            i_arg = ['-ss', "%.06f" % (starttime - offset),
-                     '-i', self.filename,
-                     '-ss', "%.06f" % offset]
-        else:
-            i_arg = [ '-i', self.filename]
+        i_arg = ['-i', self.filename]
+        if starttime != 0:
+            i_arg.extend(['-ss', str(starttime)])
+        if duration is not None:
+            i_arg.extend(['-t', str(duration)])
+
+        #if starttime != 0:
+            #offset = min(1, starttime)
+            #i_arg = ['-ss', "%.06f" % (starttime - offset),
+                     #'-i', self.filename,
+                     #'-ss', "%.06f" % offset]
+        #else:
 
 
         cmd = ([get_setting("FFMPEG_BINARY")]+ i_arg +
@@ -106,7 +114,7 @@ class FFMPEG_VideoReader:
         s = self.proc.stdout.read(nbytes)
         if len(s) != nbytes:
 
-            warnings.warn("Warning: in file %s, "%(self.filename)+
+            """warnings.warn("Warning: in file %s, "%(self.filename)+
                    "%d bytes wanted but %d bytes read,"%(nbytes, len(s))+
                    "at frame %d/%d, at time %.02f/%.02f sec. "%(
                     self.pos,self.nframes,
@@ -124,7 +132,8 @@ class FFMPEG_VideoReader:
                                "Please update to a recent version from the website.")%(
                                 self.filename))
 
-            result = self.lastread
+            result = self.lastread"""
+            return None
 
         else:
 
@@ -132,6 +141,7 @@ class FFMPEG_VideoReader:
             result.shape =(h, w, len(s)//(w*h)) # reshape((h, w, len(s)//(w*h)))
             self.lastread = result
 
+        self.pos += 1
         return result
 
     def get_frame(self, t):
@@ -144,12 +154,12 @@ class FFMPEG_VideoReader:
         """
 
         # these definitely need to be rechecked sometime. Seems to work.
-        
+
         # I use that horrible '+0.00001' hack because sometimes due to numerical
         # imprecisions a 3.0 can become a 2.99999999... which makes the int()
         # go to the previous integer. This makes the fetching more robust in the
         # case where you get the nth frame by writing get_frame(n/fps).
-        
+
         pos = int(self.fps*t + 0.00001)+1
 
         if pos == self.pos:
@@ -163,6 +173,15 @@ class FFMPEG_VideoReader:
             result = self.read_frame()
             self.pos = pos
             return result
+
+    def get_duration(self):
+        duration = self.duration
+        if self.t_flag is not None:
+            duration = self.t_flag
+        if self.ss_flag != 0:
+            duration -= self.ss_flag
+
+        return duration
 
     def close(self):
         if hasattr(self,'proc'):
